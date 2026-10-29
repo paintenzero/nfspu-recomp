@@ -1,0 +1,8 @@
+{
+  "name": "nfspu-recomp-build-tools",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": { "shaders": "node src/renderer/compile_shaders.cjs" },
+  "devDependencies": { "@webgpu/glslang": "0.0.15" }
+}
