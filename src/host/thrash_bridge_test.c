@@ -76,6 +76,16 @@ int main(int argc,char **argv) {
     uint32_t lock=call("_THRASH_lockwindow@0",0,NULL);
     CHECK(lock&&MEM32(lock+8)==4&&MEM32(lock+12)==640&&MEM32(lock+16)==480,"lockwindow layout");
     if(lock)CHECK(MEM16(MEM32(lock)+(50*640+50)*2)==0x07E0,"guest RGB565 framebuffer readback");
+    /* dx7z clearwindow clears the clip rectangle only. Paint a known color
+     * into a small clip and require the rest of the target to stay black. */
+    uint32_t red_clear[]={3,0xFFFF0000u};call("_THRASH_setstate@8",2,red_clear);
+    uint32_t clip[]={0,0,30,30};CHECK(call("_THRASH_clip@16",4,clip)==1,"clip rectangle");
+    call("_THRASH_clearwindow@0",0,NULL);lock=call("_THRASH_lockwindow@0",0,NULL);
+    CHECK(lock&&MEM16(MEM32(lock)+(10*640+10)*2)==0xF800,"clip clear paints inside the rectangle");
+    CHECK(lock&&MEM16(MEM32(lock)+(200*640+200)*2)!=0xF800,"clip clear leaves pixels outside the rectangle");
+    uint32_t black_clear[]={3,0xFF000000u};call("_THRASH_setstate@8",2,black_clear);
+    uint32_t fullclip[]={0,0,640,480};call("_THRASH_clip@16",4,fullclip);
+    call("_THRASH_clearwindow@0",0,NULL);
     CHECK(MEM32(info)==0,"locking does not mutate persistent surface info");
     uint32_t geometry_state[]={2,1};
     call("_THRASH_setstate@8",2,geometry_state);

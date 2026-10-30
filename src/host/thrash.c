@@ -17,6 +17,7 @@
 #else
 #include <dlfcn.h>
 #endif
+#include <SDL3/SDL.h>
 
 #define THRASH_MODULE 0x7D010000u
 #define MAX_TEXTURES 8192
@@ -40,6 +41,9 @@ static uint8_t pressed_keys[512];
 static int mouse_dx,mouse_dy;
 static uint32_t mouse_buttons;
 static unsigned frames, draws, uploads, software_frames;
+typedef struct { uint32_t x, y, w, h, n; } clip_stat;
+static clip_stat clip_stats[8];
+static unsigned partial_clears;
 static uint32_t vertex_stride=32, sprite_stride=32;
 static uint8_t texture_audit[512*512*3];
 typedef struct texture_slot { uint32_t va, gpu_id, width,height,format; uint8_t *pixels; uint32_t *palette; } texture_slot;
@@ -108,6 +112,9 @@ static int open_gpu(void) {
 }
 void nfspu_thrash_pump(void) {
     if (!opened) return;
+#ifdef __APPLE__
+    if (!hle_on_video_thread()) return;
+#endif
     nfspu_gpu_event e;
     while(gpu->poll(&e)) {
         if(e.type==1) { uint32_t h=hle_first_hwnd(); if(h) hle_post_message(h,0x10,0,0); }
@@ -142,6 +149,33 @@ void nfspu_thrash_pump(void) {
             hle_input_mouse(msg,e.x,e.y);
         }
     }
+    /* A missed button-up (focus loss, a pump that ran before the event was
+     * queued) leaves the menu's confirm gesture held, so its click retriggers
+     * for the whole race. SDL's live state is the source of truth. */
+    int held_any = mouse_buttons != 0;
+    for (int sc = 0; sc < 512 && !held_any; sc++) held_any = keys[sc] != 0;
+    if (!held_any) return;
+    int nkeys = 0;
+    const bool *live = SDL_GetKeyboardState(&nkeys);
+    if (live) {
+        int limit = nkeys < 512 ? nkeys : 512;
+        for (int sc = 0; sc < limit; sc++) if (keys[sc] && !live[sc]) {
+            keys[sc] = 0;
+            pressed_keys[sc] = 0;
+            uint32_t vk = nfspu_vk_from_scancode((uint32_t)sc);
+            if (vk) hle_input_key(0, vk, nfspu_win_scan_from_scancode((uint32_t)sc));
+        }
+    }
+    float mx = 0, my = 0;
+    SDL_MouseButtonFlags held = SDL_GetMouseState(&mx, &my);
+    uint32_t live_buttons = 0;
+    if (held & SDL_BUTTON_MASK(1)) live_buttons |= 1;
+    if (held & SDL_BUTTON_MASK(2)) live_buttons |= 2;
+    if (held & SDL_BUTTON_MASK(3)) live_buttons |= 4;
+    if ((mouse_buttons & 1) && !(live_buttons & 1)) hle_input_mouse(0x202, 0, 0);
+    if ((mouse_buttons & 2) && !(live_buttons & 2)) hle_input_mouse(0x208, 0, 0);
+    if ((mouse_buttons & 4) && !(live_buttons & 4)) hle_input_mouse(0x205, 0, 0);
+    mouse_buttons = live_buttons;
 }
 void nfspu_thrash_load_graphics(void){
     if(!load_gpu())return;
@@ -220,11 +254,49 @@ static void r_mode(void) {
     MEM32(lockdesc+4)=width*color_bits/8;MEM32(lockdesc+8)=color_bits==16?4:6;MEM32(lockdesc+12)=width;MEM32(lockdesc+16)=height;
     memcpy(hle_ptr(surface_info),hle_ptr(lockdesc),20);MEM32(surface_info)=0;
     fprintf(stderr,"[thrash] setvideomode(%u,%u,%u) -> %ux%ux%u\n",i,A32(1),bits,width,height,color_bits);
+    /* The menu click that started the race may have lost its button-up: the
+     * host state is already clear, so the per-frame resync never posts one,
+     * and the front end keeps retriggering the click. One release here, only
+     * for buttons SDL says are up, reaches the focus window. */
+    if(width>=1280){
+        float mx=0,my=0;SDL_MouseButtonFlags held=SDL_GetMouseState(&mx,&my);
+        if(!(held&SDL_BUTTON_MASK(1))){mouse_buttons&=~1u;hle_input_mouse(0x202,0,0);}
+        if(!(held&SDL_BUTTON_MASK(2))){mouse_buttons&=~2u;hle_input_mouse(0x208,0,0);}
+        if(!(held&SDL_BUTTON_MASK(3))){mouse_buttons&=~4u;hle_input_mouse(0x205,0,0);}
+    }
     RET(1,3);
 }
 static void r_restore(void){nfspu_thrash_shutdown();RET(1,0);}
 static void r_idle(void){nfspu_thrash_pump();RET(1,0);}
-static void r_clear(void){if(open_gpu())gpu->clear(clear_color,clear_depth);RET(1,0);}
+/* dx7z Clear uses the clip rectangle (D3DRECT), not the whole target. A mirror
+ * clear must not wipe the scene drawn outside that rectangle. */
+static void clear_clip(uint32_t x,uint32_t y,uint32_t w,uint32_t h){
+    float z=clear_depth;if(z<0)z=0;if(z>1)z=1;
+    nfspu_gpu_vertex v[4]={
+        {(float)x,(float)y,z,1,clear_color,0,0,0},
+        {(float)(x+w),(float)y,z,1,clear_color,0,0,0},
+        {(float)(x+w),(float)(y+h),z,1,clear_color,0,0,0},
+        {(float)x,(float)(y+h),z,1,clear_color,0,0,0}};
+    const uint32_t idx[]={0,1,2,0,2,3};
+    nfspu_gpu_state s={0};
+    s.depth_test=1;s.depth_write=1;s.depth_func=8;s.cull=1;s.fog_far=1;
+    s.scissor_enable=1;s.scissor_x=x;s.scissor_y=y;s.scissor_w=w;s.scissor_h=h;
+    gpu->draw(v,4,idx,6,&s);
+}
+static int clip_is_partial(void){
+    return render_state.scissor_enable && (render_state.scissor_x!=0||render_state.scissor_y!=0||
+        render_state.scissor_w!=width||render_state.scissor_h!=height);
+}
+static void r_clear(void){
+    if(open_gpu()){
+        if(!clip_is_partial())gpu->clear(clear_color,clear_depth);
+        else if(render_state.scissor_w&&render_state.scissor_h){
+            partial_clears++;
+            clear_clip(render_state.scissor_x,render_state.scissor_y,render_state.scissor_w,render_state.scissor_h);
+        }
+    }
+    RET(1,0);
+}
 static void r_flush(void){RET(1,0);}
 static void capture_frame(void){
     const char *capture=getenv("NFSPU_FRAME_CAPTURE");if(!capture||!*capture)return;
@@ -232,9 +304,23 @@ static void capture_frame(void){
     if(rgba&&gpu->read_pixels(rgba,width,height)){FILE*f=fopen(capture,"wb");if(f){fprintf(f,"P6\n%u %u\n255\n",width,height);for(size_t i=0;i<(size_t)width*height;i++)fwrite(rgba+i*4,1,3,f);fclose(f);}}
     free(rgba);
 }
+static void note_clip(void){
+    uint32_t x=0,y=0,w=width,h=height;
+    if(render_state.scissor_enable){x=render_state.scissor_x;y=render_state.scissor_y;w=render_state.scissor_w;h=render_state.scissor_h;}
+    for(int i=0;i<8;i++){
+        if(clip_stats[i].n&&clip_stats[i].x==x&&clip_stats[i].y==y&&clip_stats[i].w==w&&clip_stats[i].h==h){clip_stats[i].n++;return;}
+        if(!clip_stats[i].n){clip_stats[i]=(clip_stat){x,y,w,h,1};return;}
+    }
+}
 static void r_flip(void){
     int ok=open_gpu() && gpu->present();nfspu_thrash_pump();frames++;
-    if(frames<=3||frames%300==0)fprintf(stderr,"[thrash] frame %u draws=%u texture_uploads=%u\n",frames,draws,uploads);
+    if(width>=1280&&(frames<=3||frames%300==0)){
+        fprintf(stderr,"[thrash] frame %u draws=%u partial_clears=%u",frames,draws,partial_clears);
+        for(int i=0;i<8;i++)if(clip_stats[i].n)
+            fprintf(stderr," clip[%u]=%u,%u %ux%u x%u",i,clip_stats[i].x,clip_stats[i].y,clip_stats[i].w,clip_stats[i].h,clip_stats[i].n);
+        fprintf(stderr,"\n");
+        memset(clip_stats,0,sizeof clip_stats);partial_clears=0;
+    }
     if(frames==3)capture_frame();
     RET(ok,0);
 }
@@ -265,6 +351,7 @@ static void submit(const nfspu_gpu_vertex *v,uint32_t n,const uint32_t *idx,uint
     nfspu_gpu_state s=render_state;s.primitive=primitive;
     if(state_values[0][41]==2)s.texture=0;
     if(trace&&draws<90)fprintf(stderr,"[thrash-draw] n=%u tex=%u bound=%08X xy=%g,%g uv=%g,%g color=%08X blend=%u\n",n,s.texture,state_values[0][1],v[0].x,v[0].y,v[0].u,v[0].v,v[0].color,s.blend_enable);
+    if(width>=1280)note_clip();
     if(!gpu->draw(v,n,idx,ni,&s))hle_fatal("SDL3 GPU draw: %s",gpu->error());
     free(adjusted);
     draws++;
@@ -484,7 +571,6 @@ static void r_unlock(void){
     nfspu_thrash_pump();
     software_frames++;
     if(software_frames<=3||software_frames%300==0)fprintf(stderr,"[thrash] software frame %u\n",software_frames);
-    if(software_frames==30)capture_frame();
     RET(ok,1);
 }
 static void r_readrect(void){

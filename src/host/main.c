@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #include "win32hle.h"
 #include "host.h"
 #include "thrash.h"
@@ -182,7 +185,7 @@ int main(int argc, char **argv) {
     }
     note("[nfspu] entry 0x%08X, running\n", recomp_host_entry());
     hle_screen_title("Need for Speed: Porsche Unleashed");
-    int result=(int)recomp_host_run();
+    int result = (int)recomp_host_run();
     nfspu_thrash_shutdown();
     return result;
 }

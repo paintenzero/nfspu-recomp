@@ -42,6 +42,7 @@ typedef struct {
     uint32_t bytes, flags;
     int channels, bits, rate, block;
     int playing, looping, primary;
+    uint32_t owner;             /* IDirectSound that created this buffer */
     double pos;                 /* the play cursor, in frames */
     int volume, pan;            /* hundredths of a dB; -10000..10000 */
     float gl, gr;
@@ -355,7 +356,32 @@ static void b_Restore(void) { RET(DS_OK, 1); }
 /* ---- IDirectSound ---- */
 static void d_Release(void) {
     uint32_t self = A32(0), n = --MEM32(self + 4);
-    if (!n) hle_com_free(self);
+    if (!n) {
+        /* The device owns its buffers. Shutdown Releases this object and
+         * then drops the stream pointer, so a buffer still playing here
+         * loops whatever was last written into it. The profile Continue
+         * click is that abandoned 0.4s stream. */
+        struct { uint32_t bytes; int rate, looping; } stopped[8];
+        int nstop = 0, more = 0;
+        pthread_mutex_lock(&g_mix);
+        for (int i = 0; i < MAX_BUFS; i++) {
+            dsbuf *b = g_buf[i];
+            if (!b || b->owner != self || !b->playing) continue;
+            b->playing = 0;
+            if (nstop < 8) {
+                stopped[nstop].bytes = b->bytes;
+                stopped[nstop].rate = b->rate;
+                stopped[nstop].looping = b->looping;
+                nstop++;
+            } else more++;
+        }
+        pthread_mutex_unlock(&g_mix);
+        for (int i = 0; i < nstop; i++)
+            fprintf(stderr, "[dsound] device release stopped bytes=%u rate=%d looping=%d\n",
+                stopped[i].bytes, stopped[i].rate, stopped[i].looping);
+        if (more) fprintf(stderr, "[dsound] device release stopped %d more\n", more);
+        hle_com_free(self);
+    }
     RET(n, 1);
 }
 static void d_CreateSoundBuffer(void) {                  /* (this, &DSBUFFERDESC, &out, outer) */
@@ -363,7 +389,7 @@ static void d_CreateSoundBuffer(void) {                  /* (this, &DSBUFFERDESC
     if (!d || !out) RET(DSERR_INVALIDPARAM, 4);
     uint32_t flags = MEM32(d + 4), bytes = MEM32(d + 8), wfx = MEM32(d + 16);
     dsbuf *b = (dsbuf *)calloc(1, sizeof *b);
-    b->flags = flags, b->primary = (flags & DSBCAPS_PRIMARYBUFFER) != 0;
+    b->flags = flags, b->primary = (flags & DSBCAPS_PRIMARYBUFFER) != 0, b->owner = A32(0);
     b->channels = 2, b->bits = 16, b->rate = 22050, b->block = 4;
     if (wfx) {
         b->channels = MEM16(wfx + 2), b->rate = (int)MEM32(wfx + 4), b->block = MEM16(wfx + 12), b->bits = MEM16(wfx + 14);
@@ -406,7 +432,7 @@ static void d_DuplicateSoundBuffer(void) {               /* (this, original, &ou
     *b = *src;
     (*b->data_refs)++;
     pthread_mutex_unlock(&g_mix);
-    b->playing = 0, b->pos = 0;
+    b->playing = 0, b->pos = 0, b->owner = A32(0);
     uint32_t o = new_buffer(b);
     MEM32(A32(2)) = o;
     RET(o ? DS_OK : DSERR_INVALIDPARAM, 3);

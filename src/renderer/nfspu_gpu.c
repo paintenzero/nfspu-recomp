@@ -207,6 +207,10 @@ static int gpu_open(uint32_t w,uint32_t h) {
     SDL_HideWindow(g.window);
     SDL_SetWindowPosition(g.window,40,40);
     SDL_ShowWindow(g.window);
+    int wx=0,wy=0,ww=0,wh=0;
+    SDL_GetWindowPosition(g.window,&wx,&wy);
+    SDL_GetWindowSize(g.window,&ww,&wh);
+    fprintf(stderr,"[gpu] window pos %d,%d size %dx%d\n",wx,wy,ww,wh);
     SDL_RaiseWindow(g.window);
 #ifdef _WIN32
     HWND hwnd=(HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(g.window),SDL_PROP_WINDOW_WIN32_HWND_POINTER,NULL);
@@ -546,7 +550,11 @@ notifications:
         switch(e.type) {
         case SDL_EVENT_QUIT: case SDL_EVENT_WINDOW_CLOSE_REQUESTED:event->type=1;return 1;
         case SDL_EVENT_WINDOW_FOCUS_LOST:g.reset_input=1;goto notifications;
-        case SDL_EVENT_KEY_DOWN:case SDL_EVENT_KEY_UP:event->type=2;event->scancode=e.key.scancode;event->down=e.key.down;return 1;
+        case SDL_EVENT_KEY_DOWN:case SDL_EVENT_KEY_UP:
+            /* SDL repeat is not a new press. DirectInput still sees the key
+             * held from the original down, and a menu click must not retrigger. */
+            if(e.key.repeat)break;
+            event->type=2;event->scancode=e.key.scancode;event->down=e.key.down;return 1;
         case SDL_EVENT_MOUSE_MOTION:event->type=3;event->x=(int32_t)((e.motion.x-rect.x)*sx);event->y=(int32_t)((e.motion.y-rect.y)*sy);event->dx=(int32_t)(e.motion.xrel*sx);event->dy=(int32_t)(e.motion.yrel*sy);return 1;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:case SDL_EVENT_MOUSE_BUTTON_UP:
             if(e.button.down&&(e.button.x<rect.x||e.button.y<rect.y||e.button.x>=rect.x+rect.w||e.button.y>=rect.y+rect.h))continue;

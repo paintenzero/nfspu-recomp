@@ -156,6 +156,8 @@ void     hle_post_message(uint32_t hwnd, uint32_t message, uint32_t wParam, uint
 int      hle_msg_pop(uint32_t *message, uint32_t *wParam, uint32_t *lParam);  /* 1 if one popped */
 uint32_t hle_first_hwnd(void);           /* the first created window, or 0 */
 void     hle_set_pump_hook(void (*fn)(void)); /* called when the queue is empty (present layer) */
+void     hle_video_service(void);             /* run that hook on the window thread */
+int      hle_on_video_thread(void);
 /* The window manager's host side (user32.c): the screen size (the display
  * mode), input as a mouse and keyboard would give it, and what is where. */
 void     hle_set_screen_size(int w, int h);

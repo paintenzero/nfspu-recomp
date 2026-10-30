@@ -186,6 +186,11 @@ void hle_block_end(void) {
     for (int spins = 0; g_waiters && g_owner_gen == g_block_gen && spins < 1000; spins++) sched_yield();
     mach_take();
     regs_load(&g_ms.r);
+    /* A guest message loop waits on another thread. Cocoa still has to be
+     * serviced here, on the thread that created the window. */
+#ifdef __APPLE__
+    hle_video_service();
+#endif
 }
 
 /* Let a waiting thread have the machine, if there is one. The mutex is not
@@ -311,7 +316,12 @@ uint32_t hle_call_guest(uint32_t va, int nargs, const uint32_t *args) {
 }
 
 /* Loops in lifted code hand the machine over too (RECOMP_BACKEDGE). */
-static void yield_hook(void) { hle_yield(); }
+static void yield_hook(void) {
+    hle_yield();
+#ifdef __APPLE__
+    hle_video_service();
+#endif
+}
 __attribute__((constructor)) static void install_yield_hook(void) { recomp_yield_hook = yield_hook; }
 
 /* ---------------------------------------------------------- handles

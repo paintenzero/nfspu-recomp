@@ -558,9 +558,30 @@ static void put_msg(uint32_t lp, const msg_t *m) {
     MEM32(lp) = m->hwnd, MEM32(lp + 4) = m->message, MEM32(lp + 8) = m->wParam, MEM32(lp + 12) = m->lParam;
     MEM32(lp + 16) = m->time, MEM32(lp + 20) = (uint32_t)m->x, MEM32(lp + 24) = (uint32_t)m->y;
 }
+static __thread int g_in_pump;
+void hle_video_service(void) {
+    if (g_in_pump || !g_pump) return;
+#ifdef __APPLE__
+    if (!hle_on_video_thread()) return;
+#endif
+    g_in_pump = 1;
+    g_pump();
+    g_in_pump = 0;
+}
 static void pump(void) {
     hle_ws_poll();
-    if (g_pump) g_pump();
+    if (!g_pump) return;
+#ifdef __APPLE__
+    /* SDL's Cocoa backend aborts if a CreateThread worker polls events.
+     * Yield; the window thread services the hook from its own waits. */
+    if (!hle_on_video_thread()) {
+        hle_block_begin();
+        usleep(1000);
+        hle_block_end();
+        return;
+    }
+#endif
+    hle_video_service();
 }
 /* An empty queue with nothing to pump it is the end of a headless loop (the
  * selftests); with a pump, GetMessage waits, giving the machine up. */
@@ -726,20 +747,42 @@ void hle_input_mouse(uint32_t message, int sx, int sy) {
     } else {
         t = hle_window_at(sx, sy, &cx, &cy);
     }
+    /* A button-up whose cursor missed every window (a mode change moved the
+     * point, or the release was outside the client) still has to reach the
+     * window that owns the gesture. Dropping it leaves a menu button held. */
+    if (!t && vk && !down) {
+        t = hle_focus_window();
+        win_t *x = t ? W(t) : NULL;
+        if (x) {
+            int ox, oy;
+            origin(x, &ox, &oy);
+            cx = sx - ox; cy = sy - oy;
+            if (cx < 0) cx = 0;
+            if (cy < 0) cy = 0;
+            if (x->w && cx >= x->w) cx = x->w - 1;
+            if (x->h && cy >= x->h) cy = x->h - 1;
+        } else t = 0;
+    }
     if (!t) return;
     q_push(t, message, mk_state(), ((uint32_t)(cy & 0xFFFF) << 16) | (uint32_t)(cx & 0xFFFF));
 }
 void hle_input_key(int down, uint32_t vk, uint32_t scan) {
     vk &= 0xFF;
-    if (down) g_keys[vk] = (uint8_t)(0x80 | ((g_keys[vk] & 1) ^ !(g_keys[vk] & 0x80)));
+    int was_down = (g_keys[vk] & 0x80) != 0;
+    /* Bit 0 toggles only on the up-to-down edge. A repeat while held must not toggle. */
+    if (down) g_keys[vk] = (uint8_t)(0x80 | ((g_keys[vk] & 1) ^ (was_down ? 0 : 1)));
     else g_keys[vk] &= 1;
     if (vk == 0xA0 || vk == 0xA1) g_keys[VK_SHIFT]=(g_keys[VK_SHIFT]&1)|((g_keys[0xA0]|g_keys[0xA1])&0x80);
     if (vk == 0xA2 || vk == 0xA3) g_keys[VK_CONTROL]=(g_keys[VK_CONTROL]&1)|((g_keys[0xA2]|g_keys[0xA3])&0x80);
     if (vk == 0xA4 || vk == 0xA5) g_keys[VK_MENU]=(g_keys[VK_MENU]&1)|((g_keys[0xA4]|g_keys[0xA5])&0x80);
     uint32_t t = hle_focus_window();
     int alt = (g_keys[VK_MENU] & 0x80) != 0;
-    /* Host scan bit8 marks E0; low8 is the PC set-1 make code. */
-    uint32_t l = 1u | (scan & 0xFFu) << 16 | (scan&0x100u?1u<<24:0) | (alt ? 1u << 29 : 0) | (down ? 0 : 3u << 30);
+    /* Host scan bit8 marks E0; low8 is the PC set-1 make code.
+     * Bit 30 is the previous state: set when this down is a repeat, so a menu
+     * that plays its click only on a fresh press does not retrigger. */
+    uint32_t l = 1u | (scan & 0xFFu) << 16 | (scan&0x100u?1u<<24:0) | (alt ? 1u << 29 : 0);
+    if (!down) l |= 3u << 30;
+    else if (was_down) l |= 1u << 30;
     if (t) q_push(t, alt || vk == VK_MENU || vk == 0x79 ? (down ? WM_SYSKEYDOWN : WM_SYSKEYUP) : (down ? WM_KEYDOWN : WM_KEYUP), vk, l);
 }
 void hle_input_cursor(int sx, int sy) { g_cursor_x = sx, g_cursor_y = sy; }

@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 #include "win32hle.h"
@@ -554,8 +555,25 @@ void hle_screen_menu(const hle_menu_item_t *items, int n, void (*chosen)(int id)
     menu_dirty();
 }
 
+static int g_warp_pending, g_warp_x, g_warp_y;
+static int video_owner(void);
+static void warp(int x, int y);
+
 void hle_screen_pump(void) {
     SDL_Event e;
+    /* AppKit delivers NSEvents only on the thread that created the window
+     * (the process main thread). A guest GetMessage runs on a CreateThread
+     * worker; pumping there aborts with nextEventMatchingMask. Give the
+     * machine up so the video thread can pump, then let the caller look again. */
+#ifdef __APPLE__
+    if (!video_owner()) {
+        hle_block_begin();
+        usleep(1000);
+        hle_block_end();
+        return;
+    }
+    if (g_warp_pending) { g_warp_pending = 0; warp(g_warp_x, g_warp_y); }
+#endif
     if (g_win) update_cursor();
     while (g_win && SDL_PollEvent(&e)) {
         if (g_menu_depth && menu_event(&e)) continue;
@@ -615,9 +633,18 @@ void hle_screen_pump(void) {
     present();
 }
 
-/* The guest moved the cursor (SetCursorPos): move the real one with it. */
+/* The guest moved the cursor (SetCursorPos): move the real one with it.
+ * Cocoa only moves the pointer on the thread that created the window, so a
+ * guest thread records the point and the video thread applies it. */
+int hle_on_video_thread(void) {
+    return !g_video_thread || pthread_equal(pthread_self(), g_video_thread);
+}
+static int video_owner(void) { return hle_on_video_thread(); }
 static void warp(int x, int y) {
     int w, h, bpp;
+#ifdef __APPLE__
+    if (!video_owner()) { g_warp_pending = 1; g_warp_x = x; g_warp_y = y; return; }
+#endif
     hle_dd_mode(&w, &h, &bpp);
     if (!g_win || g_dst.w <= 0 || w <= 0 || h <= 0) return;
     SDL_WarpMouseInWindow(g_win, g_dst.x + x * g_dst.w / w, g_dst.y + y * g_dst.h / h);
