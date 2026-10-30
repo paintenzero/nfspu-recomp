@@ -1,0 +1,22 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Need for Speed: Porsche Unleashed",
+  "system": "PC (Windows)",
+  "type": "recomp",
+  "original": {
+    "region": "USA",
+    "revision": "PC 3.5"
+  },
+  "project": "NFS Porsche Unleashed recompilation",
+  "status": "in-progress",
+  "targets": ["Windows", "Linux", "macOS"],
+  "toolchain": "pcrecomp",
+  "approach": "Static x86-to-C recompilation with a native 64-bit host and custom SDL3 GPU renderer.",
+  "notes": "Windows startup, menus, a Cote d'Azur race, keyboard acceleration and widescreen rendering have been checked. macOS builds and runs the same way as Windows but has not been fully checked yet. Linux support is still in progress. Requires a legally obtained game installation; no game assets are included.",
+  "links": [
+    {
+      "label": "Source",
+      "url": "https://github.com/paintenzero/nfspu-recomp"
+    }
+  ]
+}
