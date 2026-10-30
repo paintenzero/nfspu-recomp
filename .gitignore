@@ -1,12 +1,8 @@
-# Local game installation, media and binary-derived output
+# Local game installation and media
 /game/
 /analysis/*
 !/analysis/functions.json
 !/analysis/dx7z-functions.json
-/src/recomp/gen/
-/src/recomp/dx7z/
-/src/recomp/recomp_dispatch.c
-/src/recomp/recomp_decls.h
 *.iso
 *.img
 *.bin

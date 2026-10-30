@@ -1,7 +1,7 @@
-"""Generate private lifted C from a local supported game installation.
+"""Regenerate lifted C from a local supported game installation.
 
 Function catalogs contain addresses/call metadata, not executable bytes.
-Generated output and original game files must remain outside Git.
+The lift is checked in; original game files must remain outside Git.
 """
 import argparse
 import hashlib
@@ -64,7 +64,7 @@ def main():
             parser.error(f"Missing or unsupported game image: {image}; see README.md")
         output = args.output_root / folder
         if output.exists() and any(output.glob("recomp_*")):
-            parser.error(f"Refusing to overwrite an existing private lift: {output}")
+            parser.error(f"Refusing to overwrite an existing lift: {output}")
     try:
         from tools.lift.translator import load_pe
         from tools.disasm.disasm32 import Disassembler
@@ -84,7 +84,7 @@ def main():
         for offset in range(0, len(records), split):
             chunk = records[offset:offset + split]
             path = output / f"recomp_{offset // split:04d}.c"
-            lines = ["/* Private binary-derived output. Do not redistribute. */",
+            lines = ["/* Binary-derived game code; not covered by the project's MIT license. */",
                      "#define RECOMP_GENERATED_CODE", '#include "recomp_types.h"',
                      "#include <math.h>", "#include <string.h>", ""]
             for record in chunk:

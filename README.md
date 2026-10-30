@@ -20,9 +20,10 @@ game's names, trademarks, code and assets belong to their respective owners.
 - Project-authored host integration, input handling, renderer and shaders.
 - A locally modified, vendored pcrecomp source snapshot and its license notices.
 - Build/preparation scripts and asset-free regression tests.
-- Function-address catalogs used to generate the private lift locally.
+- Generated game-function C, dispatch tables and declarations in `src/recomp/`.
+- Function-address catalogs and scripts for optionally regenerating the lift.
 
-**No game assets, original executables, generated game-function C, disc images,
+**No game assets, original executables, disc images,
 compiled applications, libraries or shader bytecode are included.** You must
 provide your own legally obtained installation. The game executable is also
 needed at runtime to load its original data and resources.
@@ -32,11 +33,11 @@ needed at runtime to load its original data and resources.
 | Tool | Use |
 | --- | --- |
 | [pcrecomp](https://github.com/sp00nznet/pcrecomp) | x86 analysis/lifting and the Win32 HLE runtime; the modified source is vendored in `third_party/pcrecomp` |
-| Python 3.10+; Capstone and pefile | Generate private C from your local binaries; versions are pinned in `requirements-lift.txt` |
+| Python 3.10+; Capstone and pefile | Optional regeneration of C from your local binaries; versions are pinned in `requirements-lift.txt` |
 | [SDL3](https://github.com/libsdl-org/SDL), [SDL3_ttf](https://github.com/libsdl-org/SDL_ttf) | Windowing, input, audio, fonts and the GPU API |
 | [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) / Clang | Windows compilation; tested with the 20261020 MSVCRT x86-64 toolchain |
 | CMake 3.16+ and a C11 compiler | Native builds and regression-test orchestration |
-| PowerShell | Windows dependency download/build and private-lift maintenance |
+| PowerShell | Windows dependency download/build and lift maintenance |
 | Node.js and npm | Shader generation; `@webgpu/glslang` is pinned by the lockfile |
 | [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler) | Compile HLSL to DXIL; tested with DXC 1.9.2609 |
 | LLVM inspection utilities and REA | Binary inspection and debugging during development; not runtime requirements |
@@ -71,7 +72,13 @@ Other editions or modified executables need new analysis; changing a checksum
 alone does not make their addresses compatible. Game files stay local and
 must not be added to Git.
 
-## 2. Generate the private C sources
+## 2. Use the included recompilation sources
+
+The generated C and native adapters are checked in under `src/recomp/`. A fresh
+clone can use them directly; skip regeneration and continue to step 3. Python,
+Capstone and pefile are only needed if you want to regenerate the lift.
+
+To regenerate a separate comparison copy from the supported game installation:
 
 Install Python, then run from the repository root:
 
@@ -81,14 +88,14 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 # Linux/macOS instead: source .venv/bin/activate
 python -m pip install -r requirements-lift.txt
-python scripts/prepare-recomp.py
+python scripts/prepare-recomp.py --output-root build/recomp-comparison
 ```
 
 This verifies the input hashes, uses the checked-in function catalogs and
-vendored lifter, writes `src/recomp/gen/` and `src/recomp/dx7z/`, merges the
+vendored lifter, writes `gen/` and `dx7z/` under the chosen output root, merges the
 dispatch/declaration files, and installs loop-scheduling, widescreen and HUD
-adapters. All generated files are ignored. Existing private lifts are not
-overwritten; use `--output-root` to generate a separate comparison copy.
+adapters. The comparison output under `build/` is ignored. Existing lifts are
+not overwritten. Without `--output-root`, the default is `src/recomp/`.
 
 For an older existing lift, `scripts/restore-loop-yields.ps1` restores missing
 scheduling points and `scripts/install-widescreen-hooks.ps1` restores the native
@@ -134,7 +141,7 @@ these files belongs in the source repository.
 
 ## Linux and macOS compilation (experimental)
 
-After generating the private lift and shader header, install SDL3/SDL3_ttf
+Using the included lift and after generating the shader header, install SDL3/SDL3_ttf
 development packages, CMake, a C11 compiler and a native build tool:
 
 ```sh
@@ -232,8 +239,10 @@ diagnostics have been observed and their individual causes remain unresolved;
 
 Project-authored code is licensed under [MIT](LICENSE), copyright 2026
 Sergei Biriukov. Vendored dependencies retain their original licenses; see
-[third-party notices](THIRD_PARTY_NOTICES.md). The MIT license does not cover or
-redistribute Electronic Arts' proprietary game code, assets, music or trademarks.
+[third-party notices](THIRD_PARTY_NOTICES.md). The included binary-derived C is
+derived from Electronic Arts' game code and is not covered by the project's MIT
+license. That license does not grant rights to the original game code, assets,
+music or trademarks.
 
 ## AI disclosure
 

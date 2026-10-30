@@ -4,6 +4,14 @@ The project-specific host, renderer, scripts and documentation are provided
 under the root MIT license. Third-party components retain their own notices.
 This license does not grant rights to Electronic Arts game code, assets or media.
 
+## Binary-derived game sources
+
+`src/recomp/` contains C lifted from the supported Porsche.exe and dx7z.dll,
+including dispatch tables, declarations and project-specific adapters. The
+underlying game code belongs to its respective rights holders and is not
+licensed under the project's MIT license. Original executables and game assets
+are not included; users must supply their own supported installation.
+
 ## Vendored pcrecomp source
 
 - Upstream: https://github.com/sp00nznet/pcrecomp
